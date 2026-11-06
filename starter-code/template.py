@@ -8,7 +8,8 @@ Instructions:
     3. Copy this file to solution/solution.py when done.
     4. Run: pytest tests/ -v
 """
-
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import time
 from typing import Any, Callable
@@ -21,6 +22,7 @@ PRICING_1M_TOKENS = {
     "gpt-4o": {"input": 5.00, "output": 20.00},
     "gpt-4o-mini": {"input": 0.150, "output": 0.600},
     "gemini-2.5-flash": {"input": 0.075, "output": 0.300},
+    "gemini-3.8-flash": {"input": 0.075, "output": 0.300},
     "gemini-2.5-pro": {"input": 1.25, "output": 5.00},
     "claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
     "claude-3-5-haiku": {"input": 0.80, "output": 4.00},
@@ -29,7 +31,7 @@ PRICING_1M_TOKENS = {
 # Standard Model Identifiers
 OPENAI_MODEL = "gpt-4o"
 OPENAI_MINI_MODEL = "gpt-4o-mini"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 ANTHROPIC_MODEL = "claude-3-5-haiku"
 
 
@@ -80,42 +82,64 @@ def call_gemini(
     top_p: float = 0.9,
     max_tokens: int = 256,
 ) -> tuple[str, float, dict]:
-    """
-    Call the Google Gemini API (using Gemini 2.5 Flash as standard) and return
-    the response text, latency, and token usage stats.
-
-    Args:
-        prompt:      The user message to send.
-        model:       The Gemini model to use (default: gemini-2.5-flash).
-        temperature: Sampling temperature.
-        top_p:       Nucleus sampling threshold.
-        max_tokens:  Maximum number of tokens to generate.
-
-    Returns:
-        A tuple of:
-            - response_text (str)
-            - latency_seconds (float)
-            - usage (dict with keys: 'input_tokens', 'output_tokens')
-
-    Hint:
-        Option A (New Google GenAI SDK):
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-            # Configure using types.GenerateContentConfig
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "mock-key"
+    start_time = time.time()
+    
+    try:
+        # Option A: New Google GenAI SDK (preferred standard)
+        from google import genai
+        from google.genai import types
+        
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=max_tokens
+        )
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=config
+        )
+        latency = time.time() - start_time
+        
+        text = response.text or ""
+        usage = {
+            "input_tokens": response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
+            "output_tokens": response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
+        }
+        return text, latency, usage
+        
+    except ImportError:
+        # Option B: Fallback to legacy google-generativeai SDK
+        import google.generativeai as genai
+        
+        genai.configure(api_key=api_key)
+        model_inst = genai.GenerativeModel(model)
+        config = genai.types.GenerationConfig(
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=max_tokens
+        )
+        response = model_inst.generate_content(prompt, generation_config=config)
+        latency = time.time() - start_time
+        
+        text = response.text or ""
+        try:
+            # Retrieve token counts from legacy API
+            input_tokens = model_inst.count_tokens(prompt).total_tokens
+            output_tokens = model_inst.count_tokens(text).total_tokens
+        except Exception:
+            # Fallback heuristic calculation if token service fails
+            input_tokens = int(len(prompt.split()) * 1.5)
+            output_tokens = int(len(text.split()) * 1.5)
             
-        Option B (Legacy Google GenerativeAI SDK):
-            import google.generativeai as genai
-            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-            model_inst = genai.GenerativeModel(model)
-            # Configure using genai.types.GenerationConfig
-            
-        Ensure your usage dictionary extracts 'input_tokens' and 'output_tokens' 
-        from the response metadata (e.g. response.usage_metadata).
-    """
-    # TODO: Initialize Gemini client, set config parameters, call generate_content,
-    #       measure latency, extract response text and usage metadata, and return the tuple.
-    raise NotImplementedError("Implement call_gemini")
+        usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+        return text, latency, usage
+
 
 
 # ---------------------------------------------------------------------------
@@ -271,22 +295,20 @@ def format_comparison_table(results: list[dict]) -> str:
 # Entry point for manual testing
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    print("=== Model Comparison Test ===")
+    print("=== Đang test gọi Gemini API ===")
     test_prompt = "Hãy giải thích sự khác biệt giữa temperature và top_p bằng tiếng Việt ngắn gọn trong 2 câu."
-    try:
-        # Note: Requires valid API keys set in environment variables
-        result = compare_models(test_prompt)
-        for model_name, stats in result.items():
-            print(f"\n[{model_name.upper()}]")
-            print(f"Latency: {stats['latency']:.2f}s | Cost: ${stats['cost']:.6f}")
-            print(f"Tokens: {stats['input_tokens']} in / {stats['output_tokens']} out")
-            print(f"Response: {stats['response']}")
-    except Exception as e:
-        print(f"Skipping live API comparison test: {e}")
-        print("Set your API keys to run manual tests.")
 
-    print("\n=== Starting Gemini 2.5 Chatbot (type 'quit' to exit) ===")
-    try:
-        streaming_chatbot()
-    except Exception as e:
-        print(f"Chatbot failed to start: {e}")
+    # Danh sách các model Flash để thử phòng khi Google bị quá tải 503
+    models_to_try = [GEMINI_MODEL, "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    for candidate_model in models_to_try:
+        print(f"\n⏳ Đang thử gọi model '{candidate_model}'...")
+        try:
+            text, latency, usage = call_gemini(test_prompt, model=candidate_model)
+            print(f"\n🎉 THÀNH CÔNG VỚI [{candidate_model.upper()}]!")
+            print(f"[PHẢN HỒI TỪ GEMINI]:\n{text}")
+            print(f"\n⏱️  Thời gian phản hồi: {latency:.2f}s")
+            print(f"📊 Token sử dụng: {usage}")
+            break
+        except Exception as e:
+            print(f"❌ {candidate_model} bị lỗi: {e}")
