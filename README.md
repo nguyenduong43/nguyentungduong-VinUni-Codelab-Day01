@@ -187,3 +187,4 @@ Streaming giúp tạo trải nghiệm người dùng mượt mà giống như Ch
 
 ---
 > **💡 Vibe Coding Tip:** Hãy tận dụng Cursor hoặc Copilot bằng cách cung cấp cho nó ngữ cảnh của file `student_guide.md` và `template.py` để viết code nháp nhanh chóng, sau đó kiểm tra và hoàn thiện bằng tay!
+# nguyentungduong-VinUni-Codelab-Day01
